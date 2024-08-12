@@ -60,7 +60,7 @@ bool consume(char *op) {
       strlen(op) != token->len ||
       memcmp(token->str, op, token->len))
     return false;
-   = tokentoken->next;
+  token = token->next;
   return true;
 }
 
