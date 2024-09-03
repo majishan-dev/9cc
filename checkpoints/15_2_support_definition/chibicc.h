@@ -1,13 +1,9 @@
-#include <assert.h>
 #include <ctype.h>
-#include <errno.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-typedef struct Type Type;
 
 //
 // tokenize.c
@@ -16,8 +12,7 @@ typedef struct Type Type;
 // Token
 typedef enum {
   TK_RESERVED, // Keywords or punctuators
-  TK_IDENT,    // Identifiers
-  TK_STR,      // String literals
+  TK_IDENT, // Identifiers
   TK_NUM,      // Integer literals
   TK_EOF,      // End-of-file markers
 } TokenKind;
@@ -30,16 +25,11 @@ struct Token {
   int val;        // If kind is TK_NUM, its value
   char *str;      // Token string
   int len;        // Token length
-
-  char *contents; // String literal contents including terminating '\0'
-  char cont_len;  // string literal length
 };
 
 void error(char *fmt, ...);
 void error_at(char *loc, char *fmt, ...);
-void error_tok(Token *tok, char *fmt, ...);
-Token *peek(char *s);
-Token *consume(char *op);
+bool consume(char *op);
 char *strndup(char *p, int len);
 Token *consume_ident();
 void expect(char *op);
@@ -49,7 +39,6 @@ bool at_eof();
 Token *new_token(TokenKind kind, Token *cur, char *str, int len);
 Token *tokenize();
 
-extern char *filename;
 extern char *user_input;
 extern Token *token;
 
@@ -57,19 +46,11 @@ extern Token *token;
 // parse.c
 //
 
-// Variable
+// Local variable
 typedef struct Var Var;
 struct Var {
-  char *name;    // Variable name
-  Type *ty;      // Type
-  bool is_local; // local or global
-
-  // Local variable
-  int offset;    // Offset from RBP
-
-  // Global variable
-  char *contents;
-  int cont_len;
+  char *name; // Variable name
+  int offset; // Offset from RBP
 };
 
 typedef struct VarList VarList;
@@ -89,20 +70,15 @@ typedef enum {
   ND_LT,        // <
   ND_LE,        // <=
   ND_ASSIGN,    // =
-  ND_ADDR,      // unary &
-  ND_DEREF,     // unary *
   ND_RETURN,    // "return"
   ND_IF,        // "if"
   ND_WHILE,     // "while"
   ND_FOR,       // "for"
-  ND_SIZEOF,    // "sizeof"
   ND_BLOCK,     // { ... }
   ND_FUNCALL,   // Function call
   ND_EXPR_STMT, // Expression statement
-  ND_STMT_EXPR, // Statement expression
   ND_VAR,       // Variable
   ND_NUM,       // Integer
-  ND_NULL,      // Empty statement
 } NodeKind;
 
 // AST node type
@@ -110,8 +86,6 @@ typedef struct Node Node;
 struct Node {
   NodeKind kind; // Node kind
   Node *next;    // Next node
-  Type *ty;      // Type, e.g. int or pointer to int
-  Token *tok;    // Representative token
 
   Node *lhs;     // Left-hand side
   Node *rhs;     // Right-hand side
@@ -123,7 +97,7 @@ struct Node {
   Node *init;
   Node *inc;
 
-  // Block or statement expression
+  // Block
   Node *body;
 
   // Function call
@@ -139,46 +113,16 @@ struct Function {
   Function *next;
   char *name;
   VarList *params;
-
+  
   Node *node;
-  VarList *locals;
+  VarList *locals;  
   int stack_size;
 };
 
-typedef struct {
-  VarList *globals;
-  Function *fns;
-} Program;
-
-Program *program();
-
-//
-// typing.c
-//
-
-typedef enum {
-  TY_CHAR,
-  TY_INT,
-  TY_PTR,
-  TY_ARRAY,
-} TypeKind;
-
-struct Type {
-  TypeKind kind;
-  Type *base;
-  int array_size;
-};
-
-Type *char_type();
-Type *int_type();
-Type *pointer_to(Type *base);
-Type *array_of(Type *base, int size);
-int size_of(Type *ty);
-
-void add_type(Program *prog);
+Function *program();
 
 //
 // codegen.c
 //
 
-void codegen(Program *prog);
+void codegen(Function *prog);

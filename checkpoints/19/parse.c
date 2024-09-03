@@ -1,16 +1,10 @@
 #include "chibicc.h"
 
 VarList *locals;
-VarList *globals;
 
 // Find a local variable by name.
 Var *find_var(Token *tok) {
   for (VarList *vl = locals; vl; vl = vl->next) {
-    Var *var = vl->var;
-    if (strlen(var->name) == tok->len && !memcmp(tok->str, var->name, tok->len))
-      return var;
-  }
-  for (VarList *vl = globals; vl; vl = vl->next) {
     Var *var = vl->var;
     if (strlen(var->name) == tok->len && !memcmp(tok->str, var->name, tok->len))
       return var;
@@ -50,36 +44,19 @@ Node *new_var(Var *var, Token *tok) {
   return node;
 }
 
-Var *push_var(char *name, Type *ty, bool is_local) {
+Var *push_var(char *name, Type *ty) {
   Var *var = calloc(1, sizeof(Var));
   var->name = name;
   var->ty = ty;
-  var->is_local = is_local;
 
   VarList *vl = calloc(1, sizeof(VarList));
   vl->var = var;
-
-  if (is_local) {
-    vl->next = locals;
-    locals = vl;
-  } else {
-    vl->next = globals;
-    globals = vl;
-  }
-
+  vl->next = locals;
+  locals = vl;
   return var;
 }
 
-char *new_label() {
-  static int cnt = 0;
-  char buf[20];
-  sprintf(buf, ".L.data.%d", cnt++);
-  return strndup(buf, 20);
-}
-
 Function *function();
-Type *basetype();
-void global_var();
 Node *declaration();
 Node *stmt();
 Node *expr();
@@ -89,71 +66,35 @@ Node *relational();
 Node *add();
 Node *mul();
 Node *unary();
-Node *postfix();
 Node *primary();
 
-bool is_function() {
-  Token *tok = token;
-  basetype();
-  bool isfunc = consume_ident() && consume("(");
-  token = tok;
-  return isfunc;
-}
-
-// program = (global-var | function)*
-Program *program() {
+// program = function*
+Function *program() {
   Function head;
   head.next = NULL;
   Function *cur = &head;
-  globals = NULL;
 
   while (!at_eof()) {
-    if (is_function()) {
-      cur->next = function();
-      cur = cur->next;
-    } else {
-      global_var();
-    }
+    cur->next = function();
+    cur = cur->next;
   }
-
-  Program *prog = calloc(1, sizeof(Program));
-  prog->globals = globals;
-  prog->fns = head.next;
-  return prog;
+  return head.next;
 }
 
 
-// basetype = ("char" | "int") "*"*
+// basetype = "int" "*"*
 Type *basetype() {
-  Type *ty;
-  if (consume("char")) {
-    ty = char_type();
-  } else {
-    expect("int");
-    ty = int_type();
-  }
-
+  expect("int");
+  Type *ty = int_type();
   while (consume("*"))
     ty = pointer_to(ty);
   return ty;
 }
 
-Type *read_type_suffix(Type *base) {
-  if (!consume("["))
-    return base;
-  int sz = expect_number();
-  expect("]");
-  base = read_type_suffix(base);
-  return array_of(base, sz); //配列のtypeをつなげている。
-}
-
 VarList *read_func_param() {
-  Type *ty = basetype(); //intかcharを判別、type作成　なお、*があったらtype-にポインタ情報を追加
-  char *name = expect_ident();//変数名
-  ty = read_type_suffix(ty);//配列の型変換typeで配列の数の情報をつなげる
-
   VarList *vl = calloc(1, sizeof(VarList));
-  vl->var = push_var(name, ty, true);
+  Type *ty = basetype();
+  vl->var = push_var(expect_ident(), ty);
   return vl;
 }
 
@@ -199,22 +140,11 @@ Function *function() {
   return fn;
 }
 
-// global-var = basetype ident ("[" num "]")* ";"
-void global_var() {
-  Type *ty = basetype();
-  char *name = expect_ident();
-  ty = read_type_suffix(ty);
-  expect(";");
-  push_var(name, ty, false);
-}
-
-// declaration = basetype ident ("[" num "]")* ("=" expr) ";"
+// declaration = basetype ident ("=" expr) ";"
 Node *declaration() {
   Token *tok = token;
-  Type *ty = basetype(); //intかcharを判別、type作成　なお、*があったらtype-にポインタ情報を追加
-  char *name = expect_ident(); //トークン消費　文字列返却
-  ty = read_type_suffix(ty);//配列の型変換typeで配列の数の情報をつなげる
-  Var *var = push_var(name, ty, true);//local or globalsにリストで変数管理　返り値はその変数自体の情報
+  Type *ty = basetype();
+  Var *var = push_var(expect_ident(), ty);
 
   if (consume(";"))
     return new_node(ND_NULL, tok);
@@ -230,10 +160,6 @@ Node *declaration() {
 Node *read_expr_stmt() {
   Token *tok = token;
   return new_unary(ND_EXPR_STMT, expr(), tok);
-}
-
-bool is_typename() {
-  return peek("char") || peek("int");
 }
 
 // stmt = "return" expr ";"
@@ -305,7 +231,7 @@ Node *stmt() {
     return node;
   }
 
-  if (is_typename()) //tokenは消費せずにintかcharを判別　返り値bool
+  if (tok = peek("int"))
     return declaration();
 
   Node *node = read_expr_stmt();
@@ -392,7 +318,7 @@ Node *mul() {
 }
 
 // unary = ("+" | "-" | "*" | "&")? unary
-//       | postfix
+//       | primary
 Node *unary() {
   Token *tok;
   if (consume("+"))
@@ -403,41 +329,7 @@ Node *unary() {
     return new_unary(ND_ADDR, unary(), tok);
   if (tok = consume("*"))
     return new_unary(ND_DEREF, unary(), tok);
-  return postfix();
-}
-
-// postfix = primary ("[" expr "]")*
-Node *postfix() {
-  Node *node = primary();
-  Token *tok;
-
-  while (tok = consume("[")) {
-    // x[y] is short for *(x+y) 
-    Node *exp = new_binary(ND_ADD, node, expr(), tok);
-    expect("]");
-    node = new_unary(ND_DEREF, exp, tok);
-  }
-  return node;
-}
-
-// stmt-expr = "(" "{" stmt stmt* "}" ")"
-//
-// Statement expression is a GNU C extension.
-Node *stmt_expr(Token *tok) {
-  Node *node = new_node(ND_STMT_EXPR, tok);
-  node->body = stmt();
-  Node *cur = node->body;
-
-  while (!consume("}")) {
-    cur->next = stmt();
-    cur = cur->next;
-  }
-  expect(")");
-
-  if (cur->kind != ND_EXPR_STMT)
-    error_tok(cur->tok, "stmt expr returning void is not supported");
-  *cur = *cur->lhs;
-  return node;
+  return primary();
 }
 
 // func-args = "(" (assign ("," assign)*)? ")"
@@ -455,28 +347,15 @@ Node *func_args() {
   return head;
 }
 
-// primary = "(" "{" stmt-expr-tail
-//         | "(" expr ")"
-//         | "sizeof" unary
-//         | ident func-args?
-//         | str
-//         | num
+// primary = "(" expr ")" | ident func-args? | num
 Node *primary() {
-  Token *tok;
-
-
   if (consume("(")) {
-    if (consume("{"))
-      return stmt_expr(tok);
-      
     Node *node = expr();
     expect(")");
     return node;
   }
 
-  if (tok = consume("sizeof"))
-    return new_unary(ND_SIZEOF, unary(), tok);
-
+  Token *tok;
   if (tok = consume_ident()) {
     if (consume("(")) {
       Node *node = new_node(ND_FUNCALL, tok);
@@ -492,16 +371,6 @@ Node *primary() {
   }
 
   tok = token;
-  if (tok->kind == TK_STR) {
-    token = token->next;
-
-    Type *ty = array_of(char_type(), tok->cont_len); 
-    Var *var = push_var(new_label(), ty, false);
-    var->contents = tok->contents;
-    var->cont_len = tok->cont_len;
-    return new_var(var, tok); //nodeを返却
-  }
-
   if (tok->kind != TK_NUM)
     error_tok(tok, "expected expression");
   return new_num(expect_number(), tok);

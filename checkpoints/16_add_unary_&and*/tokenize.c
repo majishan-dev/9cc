@@ -1,6 +1,5 @@
 #include "chibicc.h"
 
-char *filename;
 char *user_input;
 Token *token;
 
@@ -13,32 +12,11 @@ void error(char *fmt, ...) {
   exit(1);
 }
 
-// Reports an error message in the following format and exit.
-//
-// foo.c:10: x = y + 1;
-//               ^ <error message here>
+// Reports an error location and exit.
 void verror_at(char *loc, char *fmt, va_list ap) {
-  // Find a line containing `loc`.
-  char *line = loc;
-  while (user_input < line && line[-1] != '\n')
-    line--;
 
-  char *end = loc;
-  while (*end != '\n')
-    end++;
-
-  // Get a line number.
-  int line_num = 1;
-  for (char *p = user_input; p < line; p++)
-    if (*p == '\n')
-      line_num++;
-
-  // Print out the line.
-  int indent = fprintf(stderr, "%s:%d: ", filename, line_num);
-  fprintf(stderr, "%.*s\n", (int)(end - line), line); //一行のはじめと終わりの部分の差分をとり、line（文初から指定した文字列を出力）
-
-  // Show the error message.
-  int pos = loc - line + indent;
+  int pos = loc - user_input;
+  fprintf(stderr, "%s\n", user_input);
   fprintf(stderr, "%*s", pos, ""); // print pos spaces.
   fprintf(stderr, "^ ");
   vfprintf(stderr, fmt, ap);
@@ -47,14 +25,14 @@ void verror_at(char *loc, char *fmt, va_list ap) {
 }
 
 // Reports an error location and exit.
-void error_at(char *loc, char *fmt, ...) { //tokenize中に利用するエラー関数
+void error_at(char *loc, char *fmt, ...) {
   va_list ap;
   va_start(ap, fmt);
   verror_at(loc, fmt, ap);
 }
 
 // Reports an error location and exit.
-void error_tok(Token *tok, char *fmt, ...) { //parseで利用するエラー関数
+void error_tok(Token *tok, char *fmt, ...) {
   va_list ap;
   va_start(ap, fmt);
   if (tok)
@@ -72,17 +50,10 @@ char *strndup(char *p, int len) {
   return buf;
 }
 
-// Returns true if the current token matches a given string.
-Token *peek(char *s) {
-  if (token->kind != TK_RESERVED || strlen(s) != token->len ||
-      memcmp(token->str, s, token->len))
-    return NULL;
-  return token;
-}
-
-// Consumes the current token if it matches a given string.
-Token *consume(char *s) {
-  if (!peek(s))
+// Consumes the current token if it matches `op`.
+Token *consume(char *op) {
+  if (token->kind != TK_RESERVED || strlen(op) != token->len ||
+      memcmp(token->str, op, token->len))
     return NULL;
   Token *t = token;
   token = token->next;
@@ -98,17 +69,18 @@ Token *consume_ident() {
   return t;
 }
 
-// Ensure that the current token is a given string
-void expect(char *s) {
-  if (!peek(s))
-    error_tok(token, "expected \"%s\"", s);
+// Ensure that the current token is `op`.
+void expect(char *op) {
+  if (token->kind != TK_RESERVED || strlen(op) != token->len ||
+      memcmp(token->str, op, token->len))
+    error_tok(token, "expected \"%s\"", op);
   token = token->next;
 }
 
 // Ensure that the current token is TK_NUM.
 int expect_number() {
   if (token->kind != TK_NUM)
-    error_tok(token, "expected a number");
+    error_at(token->str, "expected a number");
   int val = token->val;
   token = token->next;
   return val;
@@ -117,7 +89,7 @@ int expect_number() {
 // Ensure that the current token is TK_IDENT.
 char *expect_ident() {
   if (token->kind != TK_IDENT)
-    error_tok(token, "expected an identifier");
+    error_at(token->str, "expected an identifier");
   char *s = strndup(token->str, token->len);
   token = token->next;
   return s;
@@ -151,8 +123,7 @@ bool is_alnum(char c) {
 
 char *starts_with_reserved(char *p) {
   // Keyword
-    static char *kw[] = {"return", "if", "else", "while", "for", "int",
-                         "char", "sizeof"};
+  static char *kw[] = {"return", "if", "else", "while", "for"};
 
   for (int i = 0; i < sizeof(kw) / sizeof(*kw); i++) {
     int len = strlen(kw[i]);
@@ -170,51 +141,6 @@ char *starts_with_reserved(char *p) {
   return NULL;
 }
 
-char get_escape_char(char c) {
-  switch (c) {
-  case 'a': return '\a';
-  case 'b': return '\b';
-  case 't': return '\t';
-  case 'n': return '\n';
-  case 'v': return '\v';
-  case 'f': return '\f';
-  case 'r': return '\r';
-  case 'e': return 27;
-  case '0': return 0;
-  default: return c;
-  }
-}
-
-
-Token *read_string_literal(Token *cur, char *start) {
-  char *p = start + 1;
-  char buf[1024];
-  int len = 0;
-
-  for (;;) {
-    if (len == sizeof(buf))
-      error_at(start, "string literal too large");
-    if (*p == '\0')
-      error_at(start, "unclosed string literal");
-    if (*p == '"')
-      break;
-
-    if (*p == '\\') {
-      p++;
-      buf[len++] = get_escape_char(*p++);
-    } else {
-      buf[len++] = *p++;
-    }
-  }
-
-  Token *tok = new_token(TK_STR, cur, start, p - start + 1);
-  tok->contents = malloc(len + 1);
-  memcpy(tok->contents, buf, len);
-  tok->contents[len] = '\0';
-  tok->cont_len = len + 1;
-  return tok;
-}
-
 // Tokenize `user_input` and returns new tokens.
 Token *tokenize() {
   char *p = user_input;
@@ -229,23 +155,6 @@ Token *tokenize() {
       continue;
     }
 
-    // Skip line comments.
-    if (startswith(p, "//")) {
-      p += 2;
-      while (*p != '\n')
-        p++;
-      continue;
-    }
-
-    // Skip block comments.
-    if (startswith(p, "/*")) {
-      char *q = strstr(p + 2, "*/");
-      if (!q)
-        error_at(p, "unclosed block comment");
-      p = q + 2;
-      continue;
-    }
-
     // Keyword or multi-letter punctuator
     char *kw = starts_with_reserved(p);
     if (kw) {
@@ -256,24 +165,17 @@ Token *tokenize() {
     }
 
     // Single-letter punctuator
-    if (strchr("+-*/()<>;={},&[]", *p)) {
+    if (strchr("+-*/()<>;={},&", *p)) {
       cur = new_token(TK_RESERVED, cur, p++, 1);
       continue;
     }
-
+    
     // Identifier
     if (is_alpha(*p)) {
       char *q = p++;
       while (is_alnum(*p))
         p++;
       cur = new_token(TK_IDENT, cur, q, p - q);
-      continue;
-    }
-
-    // String literal
-    if (*p == '"') {
-      cur = read_string_literal(cur, p);
-      p += cur->len;
       continue;
     }
 

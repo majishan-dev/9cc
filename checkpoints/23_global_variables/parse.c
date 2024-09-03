@@ -70,13 +70,6 @@ Var *push_var(char *name, Type *ty, bool is_local) {
   return var;
 }
 
-char *new_label() {
-  static int cnt = 0;
-  char buf[20];
-  sprintf(buf, ".L.data.%d", cnt++);
-  return strndup(buf, 20);
-}
-
 Function *function();
 Type *basetype();
 void global_var();
@@ -123,16 +116,10 @@ Program *program() {
 }
 
 
-// basetype = ("char" | "int") "*"*
+// basetype = "int" "*"*
 Type *basetype() {
-  Type *ty;
-  if (consume("char")) {
-    ty = char_type();
-  } else {
-    expect("int");
-    ty = int_type();
-  }
-
+  expect("int");
+  Type *ty = int_type();
   while (consume("*"))
     ty = pointer_to(ty);
   return ty;
@@ -144,13 +131,13 @@ Type *read_type_suffix(Type *base) {
   int sz = expect_number();
   expect("]");
   base = read_type_suffix(base);
-  return array_of(base, sz); //配列のtypeをつなげている。
+  return array_of(base, sz);
 }
 
 VarList *read_func_param() {
-  Type *ty = basetype(); //intかcharを判別、type作成　なお、*があったらtype-にポインタ情報を追加
-  char *name = expect_ident();//変数名
-  ty = read_type_suffix(ty);//配列の型変換typeで配列の数の情報をつなげる
+  Type *ty = basetype();
+  char *name = expect_ident();
+  ty = read_type_suffix(ty);
 
   VarList *vl = calloc(1, sizeof(VarList));
   vl->var = push_var(name, ty, true);
@@ -211,10 +198,10 @@ void global_var() {
 // declaration = basetype ident ("[" num "]")* ("=" expr) ";"
 Node *declaration() {
   Token *tok = token;
-  Type *ty = basetype(); //intかcharを判別、type作成　なお、*があったらtype-にポインタ情報を追加
-  char *name = expect_ident(); //トークン消費　文字列返却
-  ty = read_type_suffix(ty);//配列の型変換typeで配列の数の情報をつなげる
-  Var *var = push_var(name, ty, true);//local or globalsにリストで変数管理　返り値はその変数自体の情報
+  Type *ty = basetype();
+  char *name = expect_ident();
+  ty = read_type_suffix(ty);
+  Var *var = push_var(name, ty, true);
 
   if (consume(";"))
     return new_node(ND_NULL, tok);
@@ -232,9 +219,6 @@ Node *read_expr_stmt() {
   return new_unary(ND_EXPR_STMT, expr(), tok);
 }
 
-bool is_typename() {
-  return peek("char") || peek("int");
-}
 
 // stmt = "return" expr ";"
 //      | "if" "(" expr ")" stmt ("else" stmt)?
@@ -305,7 +289,7 @@ Node *stmt() {
     return node;
   }
 
-  if (is_typename()) //tokenは消費せずにintかcharを判別　返り値bool
+  if (tok = peek("int"))
     return declaration();
 
   Node *node = read_expr_stmt();
@@ -420,26 +404,6 @@ Node *postfix() {
   return node;
 }
 
-// stmt-expr = "(" "{" stmt stmt* "}" ")"
-//
-// Statement expression is a GNU C extension.
-Node *stmt_expr(Token *tok) {
-  Node *node = new_node(ND_STMT_EXPR, tok);
-  node->body = stmt();
-  Node *cur = node->body;
-
-  while (!consume("}")) {
-    cur->next = stmt();
-    cur = cur->next;
-  }
-  expect(")");
-
-  if (cur->kind != ND_EXPR_STMT)
-    error_tok(cur->tok, "stmt expr returning void is not supported");
-  *cur = *cur->lhs;
-  return node;
-}
-
 // func-args = "(" (assign ("," assign)*)? ")"
 Node *func_args() {
   if (consume(")"))
@@ -455,20 +419,12 @@ Node *func_args() {
   return head;
 }
 
-// primary = "(" "{" stmt-expr-tail
-//         | "(" expr ")"
-//         | "sizeof" unary
-//         | ident func-args?
-//         | str
-//         | num
+/// primary = "(" expr ")" | "sizeof" unary | ident func-args? | num
 Node *primary() {
   Token *tok;
 
 
   if (consume("(")) {
-    if (consume("{"))
-      return stmt_expr(tok);
-      
     Node *node = expr();
     expect(")");
     return node;
@@ -492,16 +448,6 @@ Node *primary() {
   }
 
   tok = token;
-  if (tok->kind == TK_STR) {
-    token = token->next;
-
-    Type *ty = array_of(char_type(), tok->cont_len); 
-    Var *var = push_var(new_label(), ty, false);
-    var->contents = tok->contents;
-    var->cont_len = tok->cont_len;
-    return new_var(var, tok); //nodeを返却
-  }
-
   if (tok->kind != TK_NUM)
     error_tok(tok, "expected expression");
   return new_num(expect_number(), tok);

@@ -141,7 +141,6 @@ void gen(Node *node) {
   }
 
   case ND_BLOCK:
-  case ND_STMT_EXPR:
     for (Node *n = node->body; n; n = n->next)
       gen(n);
     return;
